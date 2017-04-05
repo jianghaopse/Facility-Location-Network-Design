@@ -115,6 +115,7 @@ public class Deploy_v2
                 union = curNode.getUnion();
             }
             */
+            /*
             if (totalIter == 1) {
                 HashSet<Integer> directLink = new HashSet<Integer>();
                 for (int k = 0; k < numOfClients; k++) {
@@ -126,6 +127,7 @@ public class Deploy_v2
                     }
                 }
             }
+            */
             
             
             //System.out.println(curNode.getUndecided().containsAll(directLinkNodes));
@@ -133,7 +135,7 @@ public class Deploy_v2
             
             double[] accum = new double[numOfNodes];
             
-            if (bandCost != MinimumCostFlow.INFEASIBLE) {
+            if (curNode.getOpen().size() <= numOfClients && bandCost != MinimumCostFlow.INFEASIBLE) {
                 if (bandCost + deviceCost * usedNode.size() < upperBound) {
                     upperBound = bandCost + deviceCost * usedNode.size();
                     bestKnown.clear();

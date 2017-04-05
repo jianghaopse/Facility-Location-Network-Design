@@ -357,7 +357,7 @@ public class Deploy
         
         double[] dualVar = new double[numOfClients];
         openInDS.clear();
-        dualResult += dualAscent(multipliers, tNode, openInDS, dualVar) + deviceCost * tNode.getOpen().size();
+        //dualResult += dualAscent(multipliers, tNode, openInDS, dualVar) + deviceCost * tNode.getOpen().size();
         //dualAdjustment(multipliers, tNode, openInDS, dualVar);
         openInDS.addAll(tNode.getOpen());
         
