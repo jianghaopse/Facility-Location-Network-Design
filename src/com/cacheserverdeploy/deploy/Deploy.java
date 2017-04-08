@@ -1,12 +1,9 @@
 package com.cacheserverdeploy.deploy;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
-import java.util.TreeSet;
-
-import com.sun.org.apache.bcel.internal.generic.NEW;
-import com.sun.org.apache.xpath.internal.operations.And;
-import com.sun.xml.internal.fastinfoset.algorithm.IEEE754FloatingPointEncodingAlgorithm;
+import java.util.LinkedList;
 
 
 public class Deploy
@@ -38,6 +35,7 @@ public class Deploy
     
     private static int upperBound;
     private static HashSet<Integer> bestKnown = new HashSet<Integer>();
+    private static int[] bestPrice;
     private static HashSet<HashSet<Integer>> checked = new HashSet<HashSet<Integer>>();
     private static HashSet<TreeNode> checkedNodes = new HashSet<TreeNode>();
     
@@ -48,6 +46,7 @@ public class Deploy
     private static int[] supply;
     private static int[] demand;
     private static int[] mappingOfClients;
+    private static int[] reverseMapping;
     
     // Open nodes after the solution of dual sub-problem
     private static int[] integerInDS;
@@ -64,12 +63,8 @@ public class Deploy
         supply = network.getSupply();
         demand = network.getDemand();
         mappingOfClients = network.getMappingOfClients();
-        
-        HashSet<Integer> directLinkNodes = new HashSet<Integer>();
-        for (int e : mappingOfClients) {
-            directLinkNodes.add(e);
-        }
-        //System.out.println(directLinkNodes);
+        reverseMapping = network.getReverseMapping();
+        bestPrice = new int[numOfNodes + 1];
         
         BranchAndBoundTree tree = new BranchAndBoundTree(numOfNodes);
         
@@ -80,7 +75,7 @@ public class Deploy
         double[][] direction = new double[numOfNodes][numOfClients];
         
         upperBound = deviceCost * numOfClients;
-        //upperBound = 110000;
+        
         int iterLimit = ROOT_MAX_ITER;
         
         int totalIter = 1;
@@ -89,33 +84,18 @@ public class Deploy
 
             TreeNode curNode = tree.getLast();
             
-            //System.out.println(curNode);
             boolean needBranch = false;
-            
-            HashSet<Integer> union = curNode.getUnion();
             
             // set of nodes that have flow after solving minimum cost flow
             HashSet<Integer> usedNode = new HashSet<Integer>();
             
-            /*
-            while (union.containsAll(directLinkNodes)) {
-                for (int i = 0; i < numOfNodes; i++) {
-                    if (curNode.getUndecided().contains(i)) {
-                        tree.branch(i, 0, 0);
-                    }  
-                }
-                
-            }
-            */
-            
-            //System.out.println(curNode.getUndecided().containsAll(directLinkNodes));
             int bandCost = MinimumCostFlow.solve(network, curNode, price, usedNode);
-            
             if (bandCost != MinimumCostFlow.INFEASIBLE) {
                 if (bandCost + deviceCost * usedNode.size() < upperBound) {
                     upperBound = bandCost + deviceCost * usedNode.size();
                     bestKnown.clear();
                     bestKnown.addAll(usedNode);
+                    bestPrice = Arrays.copyOf(price, numOfNodes + 1);
                 }
                 
                 if (!curNode.getUndecided().isEmpty()) {
@@ -190,6 +170,7 @@ public class Deploy
                                                     upperBound = bandCost + deviceCost * usedNode.size();
                                                     bestKnown.clear();
                                                     bestKnown.addAll(usedNode);
+                                                    bestPrice = Arrays.copyOf(price, numOfNodes + 1);
                                                     lambda = INITIAL_LAMBDA;
                                                 }
                                             }
@@ -202,8 +183,6 @@ public class Deploy
                                         
                                         double stepsize = updateMultipliers(multipliers, subgradient, direction, lambda, dualResult);
                                         if (norm2(direction) <= EPSILON || stepsize <= EPSILON || iter >= iterLimit) {
-                                            //System.out.println(norm2(direction));
-                                            //System.out.println(stepsize);
                                             needBranch = true;
                                             break;
                                         }
@@ -220,6 +199,7 @@ public class Deploy
                                         if (bandCost + deviceCost * usedNode.size() < upperBound) {
                                             bestKnown.clear();
                                             bestKnown.addAll(usedNode);
+                                            bestPrice = Arrays.copyOf(price, numOfNodes + 1);
                                             upperBound = bandCost + deviceCost * usedNode.size();
                                         }
                                     }
@@ -333,29 +313,60 @@ public class Deploy
                 for (int k = 0; k < numOfClients; k++) {
                     modCost[k] = nNode.cost + multipliers[nNode.to][k] - multipliers[i][k];
                 }
-                //System.out.println("In dualSubProblem, modCost, " + i + "->" + nNode.to + ": "
-                //        + Arrays.toString(modCost));
+
                 double curResult = dualSubproblemDecom(nNode, modCost);
                 dualResult += curResult;
-                
-                //System.out.println("In dualSubProblem, modDeviceCost, " + i + "->" + nNode.to + ": "
-                //        + nNode.modDeviceCost);
-                //System.out.println("In dualSubProblem, dualResult, " + i + "->" + nNode.to + ": "
-                //        + curResult);
-                //System.out.println("In dualSubProblem, commodity flow, " + i + "->" + nNode.to + ": "
-                //        + Arrays.toString(nNode.commodityFlow));
-                
                 nNode = nNode.right;
             }
         }
         
         for (int k = 0; k < numOfClients; k++) {
-            //System.out.println("supply: " + (multipliers[mappingOfClients[k]][k] - multipliers[numOfNodes][k]) * supply[mappingOfClients[k]]);
             dualResult += multipliers[mappingOfClients[k]][k] * supply[mappingOfClients[k]];
-            //System.out.println("supply: " + supply[mappingOfClients[k]]);
         }
         
+        // Initialize dual ascent procedure
         double[] dualVar = new double[numOfClients];
+        double[] slack = new double[numOfNodes];
+        double[] tmpForSorting = new double[numOfNodes];
+        double[][] multipliersMod = new double[numOfNodes + 1][numOfClients];
+        
+        // Sort every column of multipliers in ascending order. 
+        for (int k = 0; k < numOfClients; k++ ) {
+            for (int i = 0; i < numOfNodes; i++) {
+                tmpForSorting[i] = multipliers[i][k] * demand[k];
+            }
+            Arrays.sort(tmpForSorting);
+            for (int i = 0; i < numOfNodes; i++) {
+                multipliersMod[i][k] = tmpForSorting[i];
+            }
+            // Add a high-cost dummy source
+            multipliersMod[numOfNodes][k] = Double.POSITIVE_INFINITY;
+        }
+        
+        // Initialize the dual variables and next scanned index
+        int[] nextScan = new int[numOfClients];
+        for (int k = 0; k < numOfClients; k++) {
+            dualVar[k] = multipliersMod[0][k];
+            nextScan[k] = 1;
+        }
+        
+        // Initialize the slacks
+        HashSet<Integer> closed = tNode.getClosed();
+        HashSet<Integer> open = tNode.getOpen();
+        for (int i = 0; i < numOfNodes; i++) {
+            if (open.contains(i)) {
+                slack[i] = 0;
+            } else if (closed.contains(i)){
+                slack[i] = Double.POSITIVE_INFINITY;
+            } else {
+                slack[i] = deviceCost;
+            }
+            for (int k = 0; k < numOfClients; k++) {
+                slack[i] -= Math.max(0, dualVar[k] - multipliers[i][k] * demand[k]);
+            }
+        }
+        
+        
         openInDS.clear();
         //dualResult += dualAscent(multipliers, tNode, openInDS, dualVar) + deviceCost * tNode.getOpen().size();
         //dualAdjustment(multipliers, tNode, openInDS, dualVar);
@@ -370,9 +381,6 @@ public class Deploy
         nNode.commodityFlow = new int[numOfClients];
         nNode.modDeviceCost = 0;
         
-        //System.out.println("In dualSubproblemDecom, modCostCopy, " + nNode.from + "->" + nNode.to + ": "
-        //               + Arrays.toString(modCostCopy));
-        
         int capacity = nNode.capacity;
         
         while (true) {
@@ -385,14 +393,11 @@ public class Deploy
                 }
             }
             
-            //System.out.println("In dualSubproblemDecom, smallestModCost: " + smallestModCost);
-            
             if (smallestModCost >= -0.000001) {
                 break;
             }
             
             int demand = Math.abs(supply[mappingOfClients[indexOfSmallest]]);
-            //System.out.println("demand: " + demand);
             if (demand < capacity) {
                 nNode.commodityFlow[indexOfSmallest] = demand;
                 capacity -= demand;
@@ -413,83 +418,38 @@ public class Deploy
         }
     }
     
-    private static double dualAscent(double[][] multipliers, TreeNode tNode, HashSet<Integer> IPlus,
-            double[] dualVar, HashSet<Integer> KPlus) {
+    private static double dualAscent(double[][] multipliers, double[][] multipliersMod, 
+            double[] dualVar, double[] slack, int[] nextScan,
+            HashSet<Integer> IPlus, HashSet<Integer> KPlus) {
         
-        // Add a high-cost dummy source
-        double[][] multipliersCopy = new double[numOfNodes + 1][numOfClients];
-        double[] tmpForSorting = new double[numOfNodes];
-        HashSet<Integer> closed = tNode.getClosed();
-        HashSet<Integer> open = tNode.getOpen();
-        
-        for (int k = 0; k < numOfClients; k++ ) {
-            for (int i = 0; i < numOfNodes; i++) {
-                if (closed.contains(i)) {
-                    tmpForSorting[i] = Double.POSITIVE_INFINITY;
-                } else {
-                    tmpForSorting[i] = multipliers[i][k] * demand[k];
-                }
-            }
-            Arrays.sort(tmpForSorting);
-            for (int i = 0; i < numOfNodes; i++) {
-                multipliersCopy[i][k] = tmpForSorting[i];
-                //System.out.println(multipliersCopy[i][k] + " ");
-            }
-            //System.out.println();
-            multipliersCopy[numOfNodes][k] = Double.POSITIVE_INFINITY;
-        }
-        
-        
-        //double[] dualVar = new double[numOfClients];
-        int[] scanned = new int[numOfClients];
-        //HashSet<Integer> needToScan = new HashSet<Integer>();
-        for (int k = 0; k < numOfClients; k++) {
-            dualVar[k] = multipliersCopy[0][k];
-            scanned[k] = 1;
-            //needToScan.add(k);
-        }
-        
-        
-        double[] slack = new double[numOfNodes];
-        for (int i = 0; i < numOfNodes; i++) {
-            if (open.contains(i)) {
-                slack[i] = 0;
-            } else {
-                slack[i] = deviceCost;
-            }
-            //slack[i] = fixedCost[i];
-            for (int k = 0; k < numOfClients; k++) {
-                slack[i] -= Math.max(0, dualVar[k] - multipliers[i][k] * demand[k]);
-            }
-        }
-        
+        // Dual ascent procedure
         while (true) {
-            int iter = 0;
+            int k = 0;
             int delta = 0;
             while (true) {
-                if (KPlus.contains(iter)) {
+                if (KPlus.contains(k)) {
                     double ascent = Double.POSITIVE_INFINITY;
                     for (int i = 0; i < numOfNodes; i++) {
-                        if (dualVar[iter] >= multipliers[i][iter] * demand[iter] - TOLERANCE && ascent > slack[i]) {
+                        if (dualVar[k] >= multipliers[i][k] * demand[k] - TOLERANCE && ascent > slack[i]) {
                             ascent = slack[i];
                         }
                     }
                     
-                    if (ascent > multipliersCopy[scanned[iter]][iter] - dualVar[iter] - TOLERANCE) {
-                        ascent = multipliersCopy[scanned[iter]][iter] - dualVar[iter];
+                    if (ascent > multipliersMod[nextScan[k]][k] - dualVar[k] + TOLERANCE) {
+                        ascent = multipliersMod[nextScan[k]][k] - dualVar[k];
                         delta = 1;
-                        scanned[iter]++;
+                        nextScan[k]++;
                     }
                     
                     for (int i = 0; i < numOfNodes; i++) {
-                        if (dualVar[iter] >= multipliers[i][iter] * demand[iter] - TOLERANCE) {
+                        if (dualVar[k] >= multipliers[i][k] * demand[k] - TOLERANCE) {
                             slack[i] -= ascent;
                         }
                     }
-                    dualVar[iter] += ascent;
+                    dualVar[k] += ascent;
                 }
-                if (iter < numOfClients - 1) {
-                    iter++;
+                if (k < numOfClients - 1) {
+                    k++;
                     continue;
                 } else {
                     break;
@@ -500,10 +460,21 @@ public class Deploy
             }
         }
         
+        double dualCost = 0;
+        for (int k = 0; k < numOfClients; k++) {
+            dualCost += dualVar[k];
+        }
+        
+        return dualCost;
+    }
+    
+    private static void primalSolution(double[][] multipliers, double[] dualVar, double[] slack, 
+            HashSet<Integer> IStar, HashSet<Integer> IPlus) {
         
         for (int i = 0; i < numOfNodes; i++) {
             boolean needOpen = false;
             if (slack[i] >= -TOLERANCE && slack[i] <= TOLERANCE) {
+                IStar.add(i);
                 for (int k = 0; k < numOfClients; k++) {
                     if (dualVar[k] >= multipliers[i][k] * demand[k] - TOLERANCE) {
                         needOpen = true;
@@ -515,16 +486,6 @@ public class Deploy
                 IPlus.add(i);
             }
         }
-        
-        //System.out.println("openInDS: " + openInDS);
-        //System.out.println("Slack: " + Arrays.toString(slack));
-        //System.out.println("Dual vars: " + Arrays.toString(dualVar));
-        double cost = 0;
-        for (int k = 0; k < numOfClients; k++) {
-            cost += dualVar[k];
-        }
-        //System.out.println("Cost: " + cost);
-        
         
         // Calculate commodity flow
         int[] iPlusk = new int[numOfClients];
@@ -577,9 +538,6 @@ public class Deploy
                 break;
             }
         }
-        System.out.println("Optimal: " + satisfied);
-        
-        return cost;
     }
     
     private static void dualAdjustment(double[][] multipliers, TreeNode tNode, HashSet<Integer> IPlus,
@@ -629,17 +587,6 @@ public class Deploy
         }
     }
     
-    
-    private static boolean allZero(double[][] multipliers) {
-        for (int i = 0; i < numOfNodes; i++) {
-            for (int k = 0; k < numOfClients; k++) {
-                if (multipliers[i][k] != 0) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
     
     /* sub-gradient calculation*/
     private static void calcSubgradient(double[][] subgradient) {
@@ -699,7 +646,6 @@ public class Deploy
     }
     
     private static int chooseBranchNode(Network network, TreeNode tNode) {
-        //System.out.println("In chooseBranchNode: " + tNode);
         NetworkNode nNode = network.getColHead(numOfNodes);
         int branchIndex = -1;
         double maxModDeviceCost = -1;
@@ -714,7 +660,74 @@ public class Deploy
     }
     
     private static String[] outputResult() {
-        return new String[] {"NA"};
+        HashSet<Integer> closed = new HashSet<Integer>();
+        HashSet<Integer> undecided = new HashSet<Integer>();
+        HashSet<Integer> usedNode = new HashSet<Integer>();
+        for (int i = 0; i < numOfNodes; i++) {
+            if (!bestKnown.contains(i)) {
+                closed.add(i);
+            }
+        }
+        TreeNode tNode = new TreeNode(closed, bestKnown, undecided);
+        int bandCost = MinimumCostFlow.solve(network, tNode, bestPrice, usedNode);
+        //int totalCost = bandCost + deviceCost * bestKnown.size();
+        //network.printFlow();
+        
+        LinkedList<String> output = new LinkedList<String>();
+
+        NetworkNode[] colHead = network.getColHead();
+        NetworkNode nNode = colHead[numOfNodes];
+        ArrayList<Integer> path = new ArrayList<Integer>();
+        
+        int pathCount = 0;
+        
+        while (nNode != null) {
+            int pathFlow = Integer.MAX_VALUE;
+            if (nNode.flow != 0) {
+                while (supply[nNode.to] == 0) {
+                    path.add(nNode.to);
+                    if (nNode.flow < pathFlow) {
+                        pathFlow = nNode.flow;
+                    }
+                    nNode = colHead[nNode.to];
+                    while (nNode.flow == 0) {
+                        nNode = nNode.right;
+                    }
+                    if (nNode.flow < pathFlow) {
+                        pathFlow = nNode.flow;
+                    }
+                }
+                path.add(nNode.to);
+                path.add(reverseMapping[nNode.to]);
+                
+                if (-supply[nNode.to] < pathFlow) {
+                    pathFlow = -supply[nNode.to];
+                }
+                
+                network.getNode(numOfNodes, path.get(0)).flow -= pathFlow;
+                for (int i = 0; i < path.size() - 2; i++) {
+                    network.getNode(path.get(i), path.get(i + 1)).flow -= pathFlow;
+                }
+                supply[path.get(path.size() - 2)] += pathFlow;
+                path.add(pathFlow);
+                pathCount++;
+                
+                StringBuilder sb = new StringBuilder();
+                for (int e : path) {
+                    sb.append(e).append(" ");
+                }
+                output.add(sb.toString());
+                
+                path.clear();
+                nNode = colHead[numOfNodes];
+            } else {
+                nNode = nNode.right;
+            }
+        }
+        output.add(0, Integer.toString(pathCount));
+        output.add(1, "");
+        
+        return (String[]) output.toArray(new String[0]);
     }
     
     public static void main(String[] args) {

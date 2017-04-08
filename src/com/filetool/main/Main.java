@@ -1,9 +1,6 @@
 package com.filetool.main;
 
 import com.cacheserverdeploy.deploy.Deploy;
-import com.cacheserverdeploy.deploy.DeployTestLR;
-import com.cacheserverdeploy.deploy.Deploy_v1;
-import com.cacheserverdeploy.deploy.Deploy_v2;
 import com.filetool.util.FileUtil;
 import com.filetool.util.LogUtil;
 
@@ -34,7 +31,7 @@ public class Main
         String[] graphContent = FileUtil.read(graphFilePath, null);
 
         // 功能实现入口
-        String[] resultContents = Deploy_v2.deployServer(graphContent);
+        String[] resultContents = Deploy.deployServer(graphContent);
 
         // 写入输出文件
         if (hasResults(resultContents))
