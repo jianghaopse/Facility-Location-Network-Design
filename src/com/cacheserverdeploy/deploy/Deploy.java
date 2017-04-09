@@ -5,6 +5,8 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedList;
 
+import jdk.management.resource.internal.inst.InitInstrumentation;
+
 
 public class Deploy
 {
@@ -419,15 +421,13 @@ public class Deploy
     }
     
     private static double dualAscent(double[][] multipliers, double[][] multipliersMod, 
-            double[] dualVar, double[] slack, int[] nextScan,
-            HashSet<Integer> IPlus, HashSet<Integer> KPlus) {
+            double[] dualVar, double[] slack, int[] nextScan, HashSet<Integer> KPlus) {
         
         // Dual ascent procedure
         while (true) {
-            int k = 0;
             int delta = 0;
-            while (true) {
-                if (KPlus.contains(k)) {
+            for (int k = 0; k < numOfClients; k++) {
+                if (KPlus == null || KPlus.contains(k)) {
                     double ascent = Double.POSITIVE_INFINITY;
                     for (int i = 0; i < numOfNodes; i++) {
                         if (dualVar[k] >= multipliers[i][k] * demand[k] - TOLERANCE && ascent > slack[i]) {
@@ -448,12 +448,6 @@ public class Deploy
                     }
                     dualVar[k] += ascent;
                 }
-                if (k < numOfClients - 1) {
-                    k++;
-                    continue;
-                } else {
-                    break;
-                }
             }
             if (delta != 1) {
                 break;
@@ -472,20 +466,11 @@ public class Deploy
             HashSet<Integer> IStar, HashSet<Integer> IPlus) {
         
         for (int i = 0; i < numOfNodes; i++) {
-            boolean needOpen = false;
             if (slack[i] >= -TOLERANCE && slack[i] <= TOLERANCE) {
                 IStar.add(i);
-                for (int k = 0; k < numOfClients; k++) {
-                    if (dualVar[k] >= multipliers[i][k] * demand[k] - TOLERANCE) {
-                        needOpen = true;
-                        break;
-                    }
-                }
-            }
-            if (needOpen) {
-                IPlus.add(i);
             }
         }
+        
         
         // Calculate commodity flow
         int[] iPlusk = new int[numOfClients];
@@ -540,51 +525,148 @@ public class Deploy
         }
     }
     
-    private static void dualAdjustment(double[][] multipliers, TreeNode tNode, HashSet<Integer> IPlus,
-            double[] dualVar, double[] slack, int[] iPlusk, int[] iPrimek, double secondBest) {
+    private static double dualAdjustment(double[][] multipliers, double[][] multipliersMod,
+            double[] dualVar, double[] slack, int[] nextScan) {
+        
+        // Set of zero-slacks, eligible facility
         HashSet<Integer> IStar = new HashSet<Integer>();
         for (int i = 0; i < numOfNodes; i++) {
             if (slack[i] == 0) {
                 IStar.add(i);
             }
         }
-        int iter = 0;
-        while (true) {
-            while (true) {
-                HashSet<Integer> IkPlus = new HashSet<Integer>();
-                for (int e : IPlus) {
-                    if (dualVar[iter] > multipliers[e][iter] * demand[iter]) {
-                        IkPlus.add(e);
-                    }
+        
+        // Set of essential facility
+        HashSet<Integer> IPlus = new HashSet<Integer>();
+        for (int k = 0; k < numOfClients; k++) {
+            int count = 0;
+            int essentialIndex = 0;
+            for (int e : IStar) {
+                if (multipliers [e][k] * demand[k] <= dualVar[k]) {
+                    count++;
+                    essentialIndex = e;
                 }
-                if (IkPlus.size() <= 1) {
-                    break;
-                }
-                HashSet<Integer> IkStar = new HashSet<Integer>();
-                for (int e : IStar) {
-                    if (dualVar[iter] >= multipliers[e][iter] * demand[iter]) {
-                        IkStar.add(e);
-                    }
-                }
-                HashSet<Integer> KiPlusPlus = new HashSet<Integer>();
-                HashSet<Integer> KiPrimePlus = new HashSet<Integer>();
-                
-                if (!IkStar.contains(iPlusk[iter]) && !IkStar.contains(iPrimek[iter])) {
-                    break;
-                }
-                for (int i = 0; i < numOfNodes; i++) {
-                    if (dualVar[iter] > multipliers[i][iter]) {
-                        slack[i] -= dualVar[iter] - secondBest;
-                    }
-                }
-                HashSet<Integer> KPlus = new HashSet<Integer>();
-                dualAscent(multipliers, tNode, KiPlusPlus, dualVar, KPlus);
-                dualAscent(multipliers, tNode, KiPlusPlus, dualVar, null);
-                
-                
-                
+            }
+            if (count == 1) {
+                IPlus.add(essentialIndex);
             }
         }
+        
+        // Augment I+
+        for (int k = 0; k < numOfClients; k++) {
+            int count = 0;
+            double smallestMultiplier = Double.POSITIVE_INFINITY;
+            int smallestIndex = 0;
+            for (int e : IPlus) {
+                if (multipliers[e][k] * demand[k] <= dualVar[k]) {
+                    count++;
+                }
+                
+            }
+            
+            if (count == 0) {
+                for (int e : IStar) {
+                    if (!IPlus.contains(e) && multipliers[e][k] * demand[k] < smallestMultiplier) {
+                        smallestMultiplier = multipliers[e][k] * demand[k];
+                        smallestIndex = e;
+                    }
+                }
+                IPlus.add(smallestIndex);
+            }
+        }
+        
+        
+        HashSet<Integer>[] IkStar = new HashSet[numOfClients];
+        HashSet<Integer>[] IkPlus = new HashSet[numOfClients];
+        for (int k = 0; k < numOfClients; k++) {
+            // Initialize IkStar
+            IkStar[k] = new HashSet<Integer>();
+            for (int e : IStar) {
+                if (dualVar[k] >= multipliers[e][k] * demand[k]) {
+                    IkStar[k].add(e);
+                }
+            }
+             // Initialize IkPlus
+            IkPlus[k] = new HashSet<Integer>();
+            for (int e : IPlus) {
+                if (dualVar[k] > multipliers[e][k] * demand[k]) {
+                    IkPlus[k].add(e);
+                }
+            }
+        }
+        
+        // Initialize KiPlus
+        HashSet<Integer>[] KiPlus = new HashSet[numOfNodes];
+        for (int i = 0; i < numOfNodes; i++) {
+            KiPlus[i] = new HashSet<Integer>();
+            for (int k = 0; k < numOfClients; k++) {
+                if (IkStar[k].size() == 1 && IkStar[k].contains(i)) {
+                    KiPlus[i].add(k);
+                }
+            }
+        }
+        
+        
+        for (int k = 0; k < numOfClients; k++) {
+            if (IkPlus[k].size() <= 1) {
+                continue;
+            }
+            
+            // Initialize iPlusk
+            int iPlusk = 0;
+            double smallestCost = Double.POSITIVE_INFINITY;
+            for (int e : IPlus) {
+                if (multipliers[e][k] * demand[k] < smallestCost) {
+                    iPlusk = e;
+                    smallestCost = multipliers[e][k] * demand[k];
+                }
+            }
+            // Initialize iPrimek
+            int iPrimek = 0;
+            double secondSmallestCost = Double.POSITIVE_INFINITY;
+            for (int e : IkPlus[k]) {
+                if (multipliers[e][k] * demand[k] != smallestCost &&
+                        multipliers[e][k] * demand[k] < secondSmallestCost) {
+                    iPrimek = e;
+                    secondSmallestCost = multipliers[e][k] * demand[k];
+                }
+            }
+            
+            if (KiPlus[iPlusk].isEmpty() && KiPlus[iPrimek].isEmpty()) {
+                continue;
+            }
+            
+            // Initialize cMinus
+            double cMinus = Double.NEGATIVE_INFINITY;
+            for (int i = 0; i < numOfNodes; i++) {
+                if (dualVar[k] > multipliers[i][k] * demand[k] && multipliers[i][k] * demand[k] > cMinus) {
+                    cMinus = multipliers[i][k] * demand[k];
+                }
+            }
+            
+            for (int i = 0; i < numOfNodes; i++) {
+                if (dualVar[k] > multipliers[i][k] * demand[k]) {
+                    slack[i] += dualVar[k] - cMinus;
+                }
+            }
+            dualVar[k] = cMinus;
+            
+            HashSet<Integer> KPlus = new HashSet<Integer>();
+            KPlus.addAll(KiPlus[iPlusk]);
+            KPlus.addAll(KiPlus[iPrimek]);
+            dualAscent(multipliers, multipliersMod, dualVar, slack, nextScan, KPlus);
+            KPlus.add(k);
+            dualAscent(multipliers, multipliersMod, dualVar, slack, nextScan, KPlus);
+            dualAscent(multipliers, multipliersMod, dualVar, slack, nextScan, null);
+            
+            
+        }
+        
+        double dualResult = 0;
+        for (int k = 0; k < numOfClients; k++) {
+            dualResult += dualVar[k];
+        }
+        return dualResult;
     }
     
     
@@ -733,7 +815,7 @@ public class Deploy
     public static void main(String[] args) {
         String[] graphContent = new String[]{"4 5 2", "", "100", "", "0 1 10 2", 
                 "0 2 30 5", "1 2 5 1", "1 3 15 3", "2 3 10 4", "", "0 2 20", "1 3 15"};
-        deployServer(graphContent);
+        //deployServer(graphContent);
         
         /*
         HashSet<Integer> closed = new HashSet<Integer>();
@@ -761,9 +843,69 @@ public class Deploy
                  {210, 190, 150, 180, 65, 120, 160, 120},
                  {170, 150, 110, 150, 70, 195, 200, 10000}};
         
-        int[] fixedCost = new int[] {50, 50, 50, 50, 50};
+        numOfNodes = 5;
+        numOfClients = 8;
+        demand = new int[numOfClients];
+        for (int k = 0; k < numOfClients; k++) {
+            demand[k] = 1;
+        }
         
-        //dualAscent(cost, fixedCost, null);
+        int[] fixedCost = new int[] {200, 200, 200, 400, 300};
+        
+        HashSet<Integer> undecided = new HashSet<Integer>();
+        for (int i = 0; i < numOfNodes; i++) {
+            undecided.add(i);
+        }
+        TreeNode tNode = new TreeNode(new HashSet<Integer>(), new HashSet<Integer>(), undecided);
+        // Initialize dual ascent procedure
+        double[] dualVar = new double[numOfClients];
+        double[] slack = new double[numOfNodes];
+        double[] tmpForSorting = new double[numOfNodes];
+        double[][] multipliers = cost;
+        double[][] multipliersMod = new double[numOfNodes + 1][numOfClients];
+        
+        // Sort every column of multipliers in ascending order. 
+        for (int k = 0; k < numOfClients; k++ ) {
+            for (int i = 0; i < numOfNodes; i++) {
+                tmpForSorting[i] = multipliers[i][k] * demand[k];
+            }
+            Arrays.sort(tmpForSorting);
+            for (int i = 0; i < numOfNodes; i++) {
+                multipliersMod[i][k] = tmpForSorting[i];
+            }
+            // Add a high-cost dummy source
+            multipliersMod[numOfNodes][k] = Double.POSITIVE_INFINITY;
+        }
+        
+        // Initialize the dual variables and next scanned index
+        int[] nextScan = new int[numOfClients];
+        for (int k = 0; k < numOfClients; k++) {
+            dualVar[k] = multipliersMod[0][k];
+            nextScan[k] = 1;
+        }
+        
+        // Initialize the slacks
+        HashSet<Integer> closed = tNode.getClosed();
+        HashSet<Integer> open = tNode.getOpen();
+        for (int i = 0; i < numOfNodes; i++) {
+            if (open.contains(i)) {
+                slack[i] = 0;
+            } else if (closed.contains(i)){
+                slack[i] = Double.POSITIVE_INFINITY;
+            } else {
+                slack[i] = fixedCost[i];
+            }
+            for (int k = 0; k < numOfClients; k++) {
+                slack[i] -= Math.max(0, dualVar[k] - multipliers[i][k] * demand[k]);
+            }
+        }
+        dualAscent(multipliers, multipliersMod, dualVar, slack, nextScan, null);
+        System.out.println("Slack: " + Arrays.toString(slack));
+        System.out.println("Dual Variable: " + Arrays.toString(dualVar));
+        double dualResult = dualAdjustment(multipliers, multipliersMod, dualVar, slack, nextScan);
+        System.out.println("Dual result: " + dualResult);
+        dualResult = dualAdjustment(multipliers, multipliersMod, dualVar, slack, nextScan);
+        System.out.println("Dual result: " + dualResult);
             
     }
 }

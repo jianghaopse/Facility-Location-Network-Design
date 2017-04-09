@@ -1,6 +1,5 @@
 package com.cacheserverdeploy.deploy;
 
-import java.security.PublicKey;
 import java.util.HashSet;
 
 
@@ -18,6 +17,7 @@ public class TreeNode {
     private HashSet<Integer> open = null;
     private HashSet<Integer> undecided = null;
     public double lowerBound = 0;
+    
     
     public TreeNode(HashSet<Integer> closed, HashSet<Integer> open, HashSet<Integer> undecided) {
         this.closed = closed;
@@ -104,7 +104,7 @@ public class TreeNode {
         }
         
         TreeNode root = new TreeNode(closed, open, undecided);
-        TreeNode newRoot = root.clone();
+        //TreeNode newRoot = root.clone();
         
         undecided.add(100);
         root.close(1);
