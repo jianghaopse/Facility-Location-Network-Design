@@ -5,8 +5,6 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedList;
 
-import jdk.management.resource.internal.inst.InitInstrumentation;
-
 
 public class Deploy
 {
@@ -38,7 +36,6 @@ public class Deploy
     private static int upperBound;
     private static HashSet<Integer> bestKnown = new HashSet<Integer>();
     private static int[] bestPrice;
-    private static HashSet<HashSet<Integer>> checked = new HashSet<HashSet<Integer>>();
     private static HashSet<TreeNode> checkedNodes = new HashSet<TreeNode>();
     
     private static Network network;
@@ -50,14 +47,12 @@ public class Deploy
     private static int[] mappingOfClients;
     private static int[] reverseMapping;
     
-    // Open nodes after the solution of dual sub-problem
-    private static int[] integerInDS;
-    
     
     public static String[] deployServer(String[] graphContent)
     {
         long startTime = System.currentTimeMillis();
         
+        // get network data
         network = new Network(graphContent);
         numOfNodes = network.getNumOfNodes();
         numOfClients = network.getNumOfClients();
@@ -67,25 +62,24 @@ public class Deploy
         mappingOfClients = network.getMappingOfClients();
         reverseMapping = network.getReverseMapping();
         bestPrice = new int[numOfNodes + 1];
+        upperBound = deviceCost * numOfClients;
         
-        BranchAndBoundTree tree = new BranchAndBoundTree(numOfNodes);
-        
+        // initialize the price, multipliers, sub-gradient and direction
         int[] price = new int[numOfNodes + 1];
-        
         double[][] multipliers = new double[numOfNodes][numOfClients];
         double[][] subgradient = new double[numOfNodes][numOfClients];
         double[][] direction = new double[numOfNodes][numOfClients];
         
-        upperBound = deviceCost * numOfClients;
-        
         int iterLimit = ROOT_MAX_ITER;
-        
         int totalIter = 1;
         
+        BranchAndBoundTree tree = new BranchAndBoundTree(numOfNodes);
+        
+        testLagrangean(tree.getLast());
+        /*
         while (System.currentTimeMillis() - startTime <= TIME_LIMIT) {
 
             TreeNode curNode = tree.getLast();
-            
             boolean needBranch = false;
             
             // set of nodes that have flow after solving minimum cost flow
@@ -151,30 +145,26 @@ public class Deploy
                                         HashSet<Integer> undecided = new HashSet<Integer>();
                                         open.addAll(openDSOdd);
                                         open.addAll(openDSEven);
-                                        if (!checked.contains(open)) {
-                                            // Do not need to check repeated nodes
-                                            checked.add(open);
-                                            //System.out.println("checked: " + checked);
-                                            for (int i = 0; i < numOfNodes; i++) {
-                                                if (!open.contains(i)) {
-                                                    closed.add(i);
-                                                }
+                                        //System.out.println("checked: " + checked);
+                                        for (int i = 0; i < numOfNodes; i++) {
+                                            if (!open.contains(i)) {
+                                                closed.add(i);
                                             }
-                                            
-                                            TreeNode newNode = new TreeNode(closed, open, undecided);
-                                            bandCost = MinimumCostFlow.solve(network, newNode, price, usedNode);
-                                            //System.out.println(Arrays.toString(price));
-                                            //network.printFlow();
-                                            //System.out.println("bandCost: " + bandCost);
-                                            //System.out.println("usedNode: " + usedNode + "\n");
-                                            if (bandCost != MinimumCostFlow.INFEASIBLE) {
-                                                if (bandCost + deviceCost * usedNode.size() < upperBound) {
-                                                    upperBound = bandCost + deviceCost * usedNode.size();
-                                                    bestKnown.clear();
-                                                    bestKnown.addAll(usedNode);
-                                                    bestPrice = Arrays.copyOf(price, numOfNodes + 1);
-                                                    lambda = INITIAL_LAMBDA;
-                                                }
+                                        }
+                                        
+                                        TreeNode newNode = new TreeNode(closed, open, undecided);
+                                        bandCost = MinimumCostFlow.solve(network, newNode, price, usedNode);
+                                        //System.out.println(Arrays.toString(price));
+                                        //network.printFlow();
+                                        //System.out.println("bandCost: " + bandCost);
+                                        //System.out.println("usedNode: " + usedNode + "\n");
+                                        if (bandCost != MinimumCostFlow.INFEASIBLE) {
+                                            if (bandCost + deviceCost * usedNode.size() < upperBound) {
+                                                upperBound = bandCost + deviceCost * usedNode.size();
+                                                bestKnown.clear();
+                                                bestKnown.addAll(usedNode);
+                                                bestPrice = Arrays.copyOf(price, numOfNodes + 1);
+                                                lambda = INITIAL_LAMBDA;
                                             }
                                         }
                                     }
@@ -183,7 +173,7 @@ public class Deploy
                                             initializeDirection(direction, subgradient);
                                         }
                                         
-                                        double stepsize = updateMultipliers(multipliers, subgradient, direction, lambda, dualResult);
+                                        double stepsize = updateMultipliers(multipliers, subgradient, direction, lambda, dualResult, iter);
                                         if (norm2(direction) <= EPSILON || stepsize <= EPSILON || iter >= iterLimit) {
                                             needBranch = true;
                                             break;
@@ -240,7 +230,10 @@ public class Deploy
         }
         System.out.println("Best: " + upperBound);
         System.out.println("Best node" + bestKnown);
+        
         return outputResult();
+        */
+        return new String[]{"NA"};
     }
     
     private static void initializeMultipliers(double[][] multipliers, int[] price) {
@@ -268,29 +261,28 @@ public class Deploy
     }
     
     private static double updateMultipliers(double[][] multipliers, double[][] subgradient,
-            double[][] direction, double lambda, double dualResult) {
+            double[][] direction, double lambda, double dualResult, int num) {
         
-        integerInDS = new int[numOfNodes];
-        for (int i = 0; i < numOfNodes; i++) {
-            for (int k = 0; k < numOfClients; k++) {
-                direction[i][k] = (subgradient[i][k] + THETA * direction[i][k]) / (1 + THETA);
+        if (num == 1) {
+            initializeDirection(direction, subgradient);
+        } else {
+            for (int i = 0; i < numOfNodes; i++) {
+                for (int k = 0; k < numOfClients; k++) {
+                    direction[i][k] = (subgradient[i][k] + THETA * direction[i][k]) / (1 + THETA);
+                }
             }
         }
+        
         double estimatedUB = (ETA * upperBound + dualResult) / 2;
         //double estimatedUB = upperBound;
         double stepSize =  lambda * (estimatedUB - dualResult) / Math.pow(norm2(subgradient), 2);
         
-        //System.out.print("In updateMultipliers, multipliers: ");
         for (int i = 0; i < numOfNodes; i++) {
             for (int k = 0; k < numOfClients; k++) {
                 multipliers[i][k] += stepSize * direction[i][k];
-                //System.out.print(multipliers[i][k] + " ");
             }
-            //System.out.println();
         }
         
-        //System.out.println("norm(d): " + norm2(direction));
-        //System.out.println("stepsize: " + stepSize);
         return stepSize;
     }
     
@@ -305,7 +297,7 @@ public class Deploy
     }
     
     /* dual subproblem calculation */
-    private static double dualSubproblem(double[][] multipliers, TreeNode tNode, HashSet<Integer> openInDS) {
+    private static double dualSubproblem(double[][] multipliers, TreeNode tNode, HashSet<Integer> IPlus) {
         NetworkNode[] colHead = network.getColHead();
         double dualResult = 0;
         double[] modCost = new double[numOfClients];
@@ -369,17 +361,19 @@ public class Deploy
         }
         
         
-        openInDS.clear();
-        //dualResult += dualAscent(multipliers, tNode, openInDS, dualVar) + deviceCost * tNode.getOpen().size();
-        //dualAdjustment(multipliers, tNode, openInDS, dualVar);
-        openInDS.addAll(tNode.getOpen());
+        IPlus.clear();
         
-        return dualResult;
+        double ascentResult = dualAscent(multipliers, multipliersMod, dualVar, slack, nextScan, null) + deviceCost * tNode.getOpen().size();
+        while (dualAdjustment(multipliers, multipliersMod, dualVar, slack, nextScan, IPlus) > ascentResult) {
+            ascentResult = dualAdjustment(multipliers, multipliersMod, dualVar, slack, nextScan, IPlus) + deviceCost * tNode.getOpen().size();
+        }
+        IPlus.addAll(tNode.getOpen());
+        
+        return dualResult + ascentResult;
     }
     
     
     private static double dualSubproblemDecom(NetworkNode nNode, double[] modCost) {
-        
         nNode.commodityFlow = new int[numOfClients];
         nNode.modDeviceCost = 0;
         
@@ -395,7 +389,7 @@ public class Deploy
                 }
             }
             
-            if (smallestModCost >= -0.000001) {
+            if (smallestModCost >= -TOLERANCE) {
                 break;
             }
             
@@ -413,7 +407,6 @@ public class Deploy
         }
         
         if (nNode.modDeviceCost <= 0) {
-            //System.out.println("In dualSubproblemDecom, modDeviceCost: " + nNode.modDeviceCost);
             return nNode.modDeviceCost;
         } else {
             return 0;
@@ -526,7 +519,7 @@ public class Deploy
     }
     
     private static double dualAdjustment(double[][] multipliers, double[][] multipliersMod,
-            double[] dualVar, double[] slack, int[] nextScan) {
+            double[] dualVar, double[] slack, int[] nextScan, HashSet<Integer> IPlus) {
         
         // Set of zero-slacks, eligible facility
         HashSet<Integer> IStar = new HashSet<Integer>();
@@ -537,7 +530,6 @@ public class Deploy
         }
         
         // Set of essential facility
-        HashSet<Integer> IPlus = new HashSet<Integer>();
         for (int k = 0; k < numOfClients; k++) {
             int count = 0;
             int essentialIndex = 0;
@@ -808,14 +800,43 @@ public class Deploy
         }
         output.add(0, Integer.toString(pathCount));
         output.add(1, "");
-        
         return (String[]) output.toArray(new String[0]);
+    }
+    
+    private static void testLagrangean(TreeNode tNode) {
+        double[][] multipliers = new double[numOfNodes][numOfClients];
+        double[][] subgradient = new double[numOfNodes][numOfClients];
+        double[][] direction = new double[numOfNodes][numOfClients];
+        
+        HashSet<Integer> IPlus = new HashSet<Integer>();
+        
+        double lowerBound = 0;
+        
+        int stall = 0;
+        double lambda = INITIAL_LAMBDA;
+        
+        for (int i = 1; i < 100; i++) {
+            double dualResult = dualSubproblem(multipliers, tNode, IPlus);
+            if (dualResult < lowerBound) {
+                stall++;
+            } else {
+                stall = 0;
+                lowerBound = dualResult;
+            }
+            if (stall >= STALL_LIMIT) {
+                lambda /= 2;
+            }
+            
+            calcSubgradient(subgradient);
+            updateMultipliers(multipliers, subgradient, direction, lambda, dualResult, i);
+            System.out.println("lower bound: " + lowerBound);
+        }
     }
     
     public static void main(String[] args) {
         String[] graphContent = new String[]{"4 5 2", "", "100", "", "0 1 10 2", 
                 "0 2 30 5", "1 2 5 1", "1 3 15 3", "2 3 10 4", "", "0 2 20", "1 3 15"};
-        //deployServer(graphContent);
+        deployServer(graphContent);
         
         /*
         HashSet<Integer> closed = new HashSet<Integer>();
@@ -835,6 +856,7 @@ public class Deploy
         */
         
         /*** Test dual ascent ***/
+        /*
         //numOfNodes = 5;
         //numOfClients = 8;
         double[][] cost = {{120, 180, 100, 10000, 60, 10000, 180, 10000},
@@ -906,6 +928,6 @@ public class Deploy
         System.out.println("Dual result: " + dualResult);
         dualResult = dualAdjustment(multipliers, multipliersMod, dualVar, slack, nextScan);
         System.out.println("Dual result: " + dualResult);
-            
+        */    
     }
 }
